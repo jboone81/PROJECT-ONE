@@ -389,6 +389,32 @@ class _DashboardScreenState extends State<DashboardScreen>
                 ],
               ),
             ),
+            Expanded (
+              child: ListTile(
+              trailing: PopupMenuButton<String>(
+                icon: Icon(Icons.more_horiz),
+
+                onSelected: (value) {
+                  if (value == 'delete') {
+                    _deleteHabit(habit);
+                  }
+                },
+
+                itemBuilder: (context) => [
+          PopupMenuItem(
+            value: 'delete',
+            child: Row(
+              children: [
+                Icon(Icons.delete, color: Colors.red),
+                SizedBox(width: 8),
+                Text('Delete'),
+              ],
+            ),
+          ),
+        ], 
+              ),
+            )),
+            const SizedBox(width: 40, height: 40,),
             Text(
               habit.streak > 0 ? '🔥 ${habit.streak}' : '',
               style: const TextStyle(fontSize: 13),
@@ -508,6 +534,52 @@ class _DashboardScreenState extends State<DashboardScreen>
         if (habit.streak > 0) habit.streak -= 1;
       }
     });
+  }
+
+  void _deleteHabit(Habit habit) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Delete Mission?',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+        ),
+        content: Text(
+          'Are you sure want to delete "${habit.name}"? This cannot be undone.',
+          style: TextStyle(color: Colors.white.withOpacity(0.6), height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(
+              'CANCEL',
+              style: TextStyle(color: Colors.white.withOpacity(0.4),
+              fontWeight: FontWeight.w700, letterSpacing: 1.0, )
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              setState(() {
+                if (habit.isCompleted) totalXP -= habit.xpReward;
+                habits.remove(habit);
+                activeHabits = habits.length;
+                bestStreak = habits.isEmpty
+                  ? 0
+                  : habits.map((h) => h.streak).reduce((a,b) => a > b ? a : b);
+              });
+              Navigator.pop(ctx);
+            },
+            child: const Text(
+              'DELETE',
+              style: TextStyle(color: Color(0xFFFF6B6B),
+              fontWeight: FontWeight.w700, letterSpacing: 1.0),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showDrawer() {
