@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../screens/stats_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -455,7 +456,29 @@ class _DashboardScreenState extends State<DashboardScreen>
                 onTap: () {
                   setState(() => _selectedNavIndex = index);
                   if (index == 0) _createHabit();
-                },
+                  if (index == 1) {Navigator.push(
+                    context,
+                    PageRouteBuilder(
+                    pageBuilder: (_, animation, __) => StatsScreen(
+                      totalXP: totalXP,
+                      bestStreak: bestStreak,
+                      habits: habits
+                      .map((h) => HabitStat(
+                      name: h.name,
+                      streak: h.streak,
+                      isCompleted: h.isCompleted,
+                      // Replace 0.0 with real weekly tracking when you
+                      // add persistence (e.g. Hive / SharedPreferences)
+                      weeklyCompletionRate: h.isCompleted ? 1.0 : 0.0,
+                      ))
+                      .toList(),
+                      ),
+                      transitionsBuilder: (_, animation, __, child) =>
+                      FadeTransition(opacity: animation, child: child),
+                      transitionDuration: const Duration(milliseconds: 300),
+                      ),
+                      ).then((_) => setState(() => _selectedNavIndex = 0));}
+                      },
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   padding: const EdgeInsets.symmetric(
