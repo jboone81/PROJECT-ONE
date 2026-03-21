@@ -1,7 +1,8 @@
 Habit Quest 🎮
 A gamified habit tracking app built with Flutter.
 
-Project Structure:
+Project Structure
+
 lib/
 ├── main.dart                      # App entry point
 └── screens/
