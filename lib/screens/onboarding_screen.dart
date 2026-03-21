@@ -95,8 +95,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   void _navigateToDashboard() {
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
-        pageBuilder: (_, animation, __) => const DashboardScreen(),
-        transitionsBuilder: (_, animation, __, child) {
+        pageBuilder: (_, animation, _) => const DashboardScreen(),
+        transitionsBuilder: (_, animation, _, child) {
           return FadeTransition(opacity: animation, child: child);
         },
         transitionDuration: const Duration(milliseconds: 500),
