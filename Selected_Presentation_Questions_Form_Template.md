@@ -1,14 +1,14 @@
 # Selected Presentation Questions Form
 
 ## Course Information
-- Course Name:
-- Course Section:
-- Instructor:
-- Semester/Term:
+- Course Name: Mobile App Development
+- Course Section: 4360
+- Instructor: Louis Henry
+- Semester/Term: Spring 2026
 
 ## Team Information
 - Group Name: Do-It
-- App/Project Title: HQ - HAbit Quest
+- App/Project Title: HQ - Habit Quest
 - Presentation Date: 3/23/2026
 
 ### Team Members
