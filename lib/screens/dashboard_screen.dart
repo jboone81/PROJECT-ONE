@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../screens/stats_screen.dart';
+import '../database_helper.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -12,11 +13,11 @@ class _DashboardScreenState extends State<DashboardScreen>
     with TickerProviderStateMixin {
   int _selectedNavIndex = 0;
 
-  // Mock state
   int totalXP = 0;
-  int activeHabits = 0;
   int bestStreak = 0;
-  final List<Habit> habits = [];
+  List<Habit> habits = [];
+
+  int get activeHabits => habits.length;
 
   late AnimationController _entryController;
   late Animation<double> _entryAnimation;
@@ -33,6 +34,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       curve: Curves.easeOutCubic,
     );
     _entryController.forward();
+    _loadData();
   }
 
   @override
@@ -40,6 +42,143 @@ class _DashboardScreenState extends State<DashboardScreen>
     _entryController.dispose();
     super.dispose();
   }
+
+  // ─── Database Operations ──────────────────────────────────────────────────
+
+  Future<void> _loadData() async {
+    final db = DatabaseHelper.instance;
+    final loadedHabits = await db.getAllHabits();
+    final stats = await db.getAppStats();
+    setState(() {
+      habits = loadedHabits;
+      totalXP = stats['total_xp'] ?? 0;
+      bestStreak = stats['best_streak'] ?? 0;
+    });
+  }
+
+  Future<void> _saveStats() async {
+    await DatabaseHelper.instance.updateAppStats(
+      totalXP: totalXP,
+      bestStreak: bestStreak,
+    );
+  }
+
+  // ─── Habit Actions ────────────────────────────────────────────────────────
+
+  void _createHabit() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1A1A2E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _CreateHabitSheet(
+        onCreate: (name) async {
+          final newHabit = await DatabaseHelper.instance.insertHabit(
+            Habit(name: name, xpReward: 50),
+          );
+          setState(() => habits.add(newHabit));
+          Navigator.pop(ctx);
+        },
+      ),
+    );
+  }
+
+  Future<void> _toggleHabit(Habit habit) async {
+    final completing = !habit.isCompleted;
+
+    final updatedHabit = habit.copyWith(
+      isCompleted: completing,
+      streak: completing
+          ? habit.streak + 1
+          : (habit.streak > 0 ? habit.streak - 1 : 0),
+    );
+
+    if (completing) {
+      totalXP += habit.xpReward;
+      if (updatedHabit.streak > bestStreak) bestStreak = updatedHabit.streak;
+
+      // Only log history if the habit has a valid database id
+      if (habit.id != null) {
+        await DatabaseHelper.instance.insertHistoryEntry(
+          habitId: habit.id!,
+          habitName: habit.name,
+          xpEarned: habit.xpReward,
+        );
+      }
+    } else {
+      totalXP -= habit.xpReward;
+    }
+
+    await DatabaseHelper.instance.updateHabit(updatedHabit);
+    await _saveStats();
+
+    setState(() {
+      final index = habits.indexWhere((h) => h.id == habit.id);
+      if (index != -1) habits[index] = updatedHabit;
+    });
+  }
+
+  void _deleteHabit(Habit habit) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Delete Mission?',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+        ),
+        content: Text(
+          'Are you sure you want to delete "${habit.name}"? This cannot be undone.',
+          style: TextStyle(color: Colors.white.withOpacity(0.6), height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(
+              'CANCEL',
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.4),
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.0,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () async {
+              if (habit.isCompleted) totalXP -= habit.xpReward;
+
+              // deleteHabit also removes all history entries for this habit
+              await DatabaseHelper.instance.deleteHabit(habit.id!);
+
+              final remaining = habits.where((h) => h.id != habit.id).toList();
+              bestStreak = remaining.isEmpty
+                  ? 0
+                  : remaining
+                        .map((h) => h.streak)
+                        .reduce((a, b) => a > b ? a : b);
+
+              await _saveStats();
+
+              setState(() => habits.removeWhere((h) => h.id == habit.id));
+              Navigator.pop(ctx);
+            },
+            child: const Text(
+              'DELETE',
+              style: TextStyle(
+                color: Color(0xFFFF6B6B),
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.0,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ─── Build ────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -70,15 +209,10 @@ class _DashboardScreenState extends State<DashboardScreen>
   Widget _buildDashboardContent() {
     return CustomScrollView(
       slivers: [
-        // App Bar
         SliverToBoxAdapter(child: _buildAppBar()),
-        // Welcome & stats
         SliverToBoxAdapter(child: _buildWelcomeSection()),
-        // Stats row
         SliverToBoxAdapter(child: _buildStatsRow()),
-        // Today's Missions
         SliverToBoxAdapter(child: _buildMissionsHeader()),
-        // Missions content
         if (habits.isEmpty)
           SliverToBoxAdapter(child: _buildEmptyState())
         else
@@ -215,9 +349,7 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   Widget _buildMissionsHeader() {
     final now = DateTime.now();
-    final dateStr =
-        '${now.month}/${now.day}/${now.year}';
-
+    final dateStr = '${now.month}/${now.day}/${now.year}';
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 28, 20, 0),
       child: Row(
@@ -253,10 +385,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         decoration: BoxDecoration(
           color: Colors.white.withOpacity(0.04),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: Colors.white.withOpacity(0.08),
-            width: 1,
-          ),
+          border: Border.all(color: Colors.white.withOpacity(0.08), width: 1),
         ),
         child: Column(
           children: [
@@ -296,8 +425,10 @@ class _DashboardScreenState extends State<DashboardScreen>
             GestureDetector(
               onTap: () => _createHabit(),
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 28, vertical: 13),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 28,
+                  vertical: 13,
+                ),
                 decoration: BoxDecoration(
                   color: const Color(0xFF6C63FF),
                   borderRadius: BorderRadius.circular(10),
@@ -355,8 +486,11 @@ class _DashboardScreenState extends State<DashboardScreen>
                   ),
                 ),
                 child: habit.isCompleted
-                    ? const Icon(Icons.check_rounded,
-                        color: Colors.white, size: 16)
+                    ? const Icon(
+                        Icons.check_rounded,
+                        color: Colors.white,
+                        size: 16,
+                      )
                     : null,
               ),
             ),
@@ -390,32 +524,25 @@ class _DashboardScreenState extends State<DashboardScreen>
                 ],
               ),
             ),
-            Expanded (
-              child: ListTile(
-              trailing: PopupMenuButton<String>(
-                icon: Icon(Icons.more_horiz),
-
-                onSelected: (value) {
-                  if (value == 'delete') {
-                    _deleteHabit(habit);
-                  }
-                },
-
-                itemBuilder: (context) => [
-          PopupMenuItem(
-            value: 'delete',
-            child: Row(
-              children: [
-                Icon(Icons.delete, color: Colors.red),
-                SizedBox(width: 8),
-                Text('Delete'),
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_horiz, color: Colors.white54),
+              onSelected: (value) {
+                if (value == 'delete') _deleteHabit(habit);
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'delete',
+                  child: Row(
+                    children: [
+                      Icon(Icons.delete, color: Colors.red),
+                      SizedBox(width: 8),
+                      Text('Delete'),
+                    ],
+                  ),
+                ),
               ],
             ),
-          ),
-        ], 
-              ),
-            )),
-            const SizedBox(width: 40, height: 40,),
+            const SizedBox(width: 8),
             Text(
               habit.streak > 0 ? '🔥 ${habit.streak}' : '',
               style: const TextStyle(fontSize: 13),
@@ -438,10 +565,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       decoration: BoxDecoration(
         color: const Color(0xFF141420),
         border: Border(
-          top: BorderSide(
-            color: Colors.white.withOpacity(0.08),
-            width: 1,
-          ),
+          top: BorderSide(color: Colors.white.withOpacity(0.08), width: 1),
         ),
       ),
       child: SafeArea(
@@ -456,33 +580,39 @@ class _DashboardScreenState extends State<DashboardScreen>
                 onTap: () {
                   setState(() => _selectedNavIndex = index);
                   if (index == 0) _createHabit();
-                  if (index == 1) {Navigator.push(
-                    context,
-                    PageRouteBuilder(
-                    pageBuilder: (_, animation, __) => StatsScreen(
-                      totalXP: totalXP,
-                      bestStreak: bestStreak,
-                      habits: habits
-                      .map((h) => HabitStat(
-                      name: h.name,
-                      streak: h.streak,
-                      isCompleted: h.isCompleted,
-                      // Replace 0.0 with real weekly tracking when you
-                      // add persistence (e.g. Hive / SharedPreferences)
-                      weeklyCompletionRate: h.isCompleted ? 1.0 : 0.0,
-                      ))
-                      .toList(),
+                  if (index == 1) {
+                    Navigator.push(
+                      context,
+                      PageRouteBuilder(
+                        pageBuilder: (_, animation, __) => StatsScreen(
+                          totalXP: totalXP,
+                          bestStreak: bestStreak,
+                          habits: habits
+                              .map(
+                                (h) => HabitStat(
+                                  name: h.name,
+                                  streak: h.streak,
+                                  isCompleted: h.isCompleted,
+                                  weeklyCompletionRate: h.isCompleted
+                                      ? 1.0
+                                      : 0.0,
+                                ),
+                              )
+                              .toList(),
+                        ),
+                        transitionsBuilder: (_, animation, __, child) =>
+                            FadeTransition(opacity: animation, child: child),
+                        transitionDuration: const Duration(milliseconds: 300),
                       ),
-                      transitionsBuilder: (_, animation, __, child) =>
-                      FadeTransition(opacity: animation, child: child),
-                      transitionDuration: const Duration(milliseconds: 300),
-                      ),
-                      ).then((_) => setState(() => _selectedNavIndex = 0));}
-                      },
+                    ).then((_) => setState(() => _selectedNavIndex = 0));
+                  }
+                },
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 20, vertical: 8),
+                    horizontal: 20,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: isSelected
                         ? const Color(0xFF6C63FF).withOpacity(0.15)
@@ -522,119 +652,20 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
-  void _createHabit() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: const Color(0xFF1A1A2E),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => _CreateHabitSheet(
-        onCreate: (name) {
-          setState(() {
-            habits.add(Habit(
-              name: name,
-              xpReward: 50,
-              streak: 0,
-            ));
-            activeHabits = habits.length;
-          });
-          Navigator.pop(ctx);
-        },
-      ),
-    );
-  }
-
-  void _toggleHabit(Habit habit) {
-    setState(() {
-      habit.isCompleted = !habit.isCompleted;
-      if (habit.isCompleted) {
-        totalXP += habit.xpReward;
-        habit.streak += 1;
-        if (habit.streak > bestStreak) bestStreak = habit.streak;
-      } else {
-        totalXP -= habit.xpReward;
-        if (habit.streak > 0) habit.streak -= 1;
-      }
-    });
-  }
-
-  void _deleteHabit(Habit habit) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1A1A2E),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text(
-          'Delete Mission?',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
-        ),
-        content: Text(
-          'Are you sure want to delete "${habit.name}"? This cannot be undone.',
-          style: TextStyle(color: Colors.white.withOpacity(0.6), height: 1.5),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(
-              'CANCEL',
-              style: TextStyle(color: Colors.white.withOpacity(0.4),
-              fontWeight: FontWeight.w700, letterSpacing: 1.0, )
-            ),
-          ),
-          TextButton(
-            onPressed: () {
-              setState(() {
-                if (habit.isCompleted) totalXP -= habit.xpReward;
-                habits.remove(habit);
-                activeHabits = habits.length;
-                bestStreak = habits.isEmpty
-                  ? 0
-                  : habits.map((h) => h.streak).reduce((a,b) => a > b ? a : b);
-              });
-              Navigator.pop(ctx);
-            },
-            child: const Text(
-              'DELETE',
-              style: TextStyle(color: Color(0xFFFF6B6B),
-              fontWeight: FontWeight.w700, letterSpacing: 1.0),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   void _showDrawer() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Menu coming soon!')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Menu coming soon!')));
   }
 
   void _showNotifications() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('No new notifications')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('No new notifications')));
   }
 }
 
-// ─── Data Models ───────────────────────────────────────────────────────────────
-
-class Habit {
-  final String name;
-  final int xpReward;
-  int streak;
-  bool isCompleted;
-
-  Habit({
-    required this.name,
-    required this.xpReward,
-    this.streak = 0,
-    this.isCompleted = false,
-  });
-}
-
-// ─── Sub-widgets ───────────────────────────────────────────────────────────────
+// ─── Sub-widgets ──────────────────────────────────────────────────────────────
 
 class _StatCard extends StatelessWidget {
   final String label;
@@ -655,10 +686,7 @@ class _StatCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: accentColor.withOpacity(0.08),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: accentColor.withOpacity(0.2),
-            width: 1,
-          ),
+          border: Border.all(color: accentColor.withOpacity(0.2), width: 1),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -748,7 +776,9 @@ class _CreateHabitSheetState extends State<_CreateHabitSheet> {
                 borderSide: BorderSide.none,
               ),
               contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 14),
+                horizontal: 16,
+                vertical: 14,
+              ),
             ),
           ),
           const SizedBox(height: 16),
