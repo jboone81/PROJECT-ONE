@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../screens/stats_screen.dart';
+import '../screens/ai_screen.dart';
 import '../database_helper.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -98,14 +99,12 @@ class _DashboardScreenState extends State<DashboardScreen>
       totalXP += habit.xpReward;
       if (updatedHabit.streak > bestStreak) bestStreak = updatedHabit.streak;
 
-      // Only log history if the habit has a valid database id
-      if (habit.id != null) {
-        await DatabaseHelper.instance.insertHistoryEntry(
-          habitId: habit.id!,
-          habitName: habit.name,
-          xpEarned: habit.xpReward,
-        );
-      }
+      // Log this completion to history so stats screen can use real data
+      await DatabaseHelper.instance.insertHistoryEntry(
+        habitId: habit.id!,
+        habitName: habit.name,
+        xpEarned: habit.xpReward,
+      );
     } else {
       totalXP -= habit.xpReward;
     }
@@ -585,6 +584,32 @@ class _DashboardScreenState extends State<DashboardScreen>
                       context,
                       PageRouteBuilder(
                         pageBuilder: (_, animation, __) => StatsScreen(
+                          totalXP: totalXP,
+                          bestStreak: bestStreak,
+                          habits: habits
+                              .map(
+                                (h) => HabitStat(
+                                  name: h.name,
+                                  streak: h.streak,
+                                  isCompleted: h.isCompleted,
+                                  weeklyCompletionRate: h.isCompleted
+                                      ? 1.0
+                                      : 0.0,
+                                ),
+                              )
+                              .toList(),
+                        ),
+                        transitionsBuilder: (_, animation, __, child) =>
+                            FadeTransition(opacity: animation, child: child),
+                        transitionDuration: const Duration(milliseconds: 300),
+                      ),
+                    ).then((_) => setState(() => _selectedNavIndex = 0));
+                  }
+                  if (index == 3) {
+                    Navigator.push(
+                      context,
+                      PageRouteBuilder(
+                        pageBuilder: (_, animation, __) => AiScreen(
                           totalXP: totalXP,
                           bestStreak: bestStreak,
                           habits: habits
