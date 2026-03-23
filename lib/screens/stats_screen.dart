@@ -19,7 +19,7 @@ class StatsScreen extends StatefulWidget {
 }
 
 class _StatsScreenState extends State<StatsScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   late AnimationController _entryController;
   late Animation<double> _entryAnimation;
 
@@ -28,6 +28,9 @@ class _StatsScreenState extends State<StatsScreen>
   List<XpPoint> _xpHistory = [];
   List<HabitStat> _habitStats = [];
   bool _isLoading = true;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -130,6 +133,7 @@ class _StatsScreenState extends State<StatsScreen>
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return Scaffold(
       backgroundColor: const Color(0xFF0F0F1A),
       body: SafeArea(

@@ -71,14 +71,23 @@ class DatabaseHelper {
 
   Future<Database> get database async {
     if (_database != null) return _database!;
+    print('🔧 Initializing database...');
+    final stopwatch = Stopwatch()..start();
     _database = await _initDB('habit_quest.db');
+    print('✅ Database initialized in ${stopwatch.elapsedMilliseconds}ms');
     return _database!;
   }
 
   Future<Database> _initDB(String filePath) async {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
-    return await openDatabase(path, version: 1, onCreate: _createDB);
+    return await openDatabase(
+      path, 
+      version: 2, 
+      onCreate: _createDB, 
+      onUpgrade: _upgradeDB,
+      singleInstance: true, // Ensure only one instance
+    );
   }
 
   Future _createDB(Database db, int version) async {
@@ -118,6 +127,27 @@ class DatabaseHelper {
 
     // Insert default stats row
     await db.insert('app_stats', {'id': 1, 'total_xp': 0, 'best_streak': 0});
+  }
+
+  Future _upgradeDB(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      // Migration to add missions table
+      await db.execute('''
+        CREATE TABLE missions (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          title        TEXT    NOT NULL,
+          description  TEXT,
+          xp_reward    INTEGER NOT NULL DEFAULT 100,
+          is_completed INTEGER NOT NULL DEFAULT 0,
+          created_at   TEXT    NOT NULL,
+          completed_at TEXT
+        )
+      ''');
+      
+      // Add indexes for better query performance
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_habit_history_date ON habit_history(completed_at)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_habit_history_habit_id ON habit_history(habit_id)');
+    }
   }
 
   // ─── Habit CRUD ────────────────────────────────────────────────────────────
@@ -314,6 +344,42 @@ class DatabaseHelper {
       'total_xp': totalXP,
       'best_streak': bestStreak,
     }, where: 'id = 1');
+  }
+
+  // ─── Mission CRUD ──────────────────────────────────────────────────────────
+
+  Future<void> insertMission({
+    required String title,
+    required String description,
+    required int xpReward,
+  }) async {
+    final db = await database;
+    await db.insert('missions', {
+      'title': title,
+      'description': description,
+      'xp_reward': xpReward,
+      'is_completed': 0,
+      'created_at': DateTime.now().toIso8601String(),
+      'completed_at': null,
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getAllMissions() async {
+    final db = await database;
+    return await db.query('missions', orderBy: 'created_at ASC');
+  }
+
+  Future<void> completeMission(int missionId) async {
+    final db = await database;
+    await db.update('missions', {
+      'is_completed': 1,
+      'completed_at': DateTime.now().toIso8601String(),
+    }, where: 'id = ?', whereArgs: [missionId]);
+  }
+
+  Future<void> deleteMission(int missionId) async {
+    final db = await database;
+    await db.delete('missions', where: 'id = ?', whereArgs: [missionId]);
   }
 
   // ─── Utility ───────────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../screens/stats_screen.dart';
 import '../screens/ai_screen.dart';
 import '../database_helper.dart';
+import '../screens/quest_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -17,6 +18,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   int totalXP = 0;
   int bestStreak = 0;
   List<Habit> habits = [];
+  bool _isLoading = true;
 
   int get activeHabits => habits.length;
 
@@ -35,6 +37,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       curve: Curves.easeOutCubic,
     );
     _entryController.forward();
+    // Load data without awaiting - don't block UI
     _loadData();
   }
 
@@ -47,14 +50,34 @@ class _DashboardScreenState extends State<DashboardScreen>
   // ─── Database Operations ──────────────────────────────────────────────────
 
   Future<void> _loadData() async {
-    final db = DatabaseHelper.instance;
-    final loadedHabits = await db.getAllHabits();
-    final stats = await db.getAppStats();
-    setState(() {
-      habits = loadedHabits;
-      totalXP = stats['total_xp'] ?? 0;
-      bestStreak = stats['best_streak'] ?? 0;
-    });
+    try {
+      final stopwatch = Stopwatch()..start();
+      print('📊 Starting database load...');
+      
+      final db = DatabaseHelper.instance;
+      print('⏱️ DatabaseHelper.instance took ${stopwatch.elapsedMilliseconds}ms');
+      
+      final loadedHabits = await db.getAllHabits();
+      print('⏱️ getAllHabits took ${stopwatch.elapsedMilliseconds}ms total (${stopwatch.elapsedMilliseconds}ms for this operation)');
+      
+      final stats = await db.getAppStats();
+      print('⏱️ getAppStats took ${stopwatch.elapsedMilliseconds}ms total');
+      
+      if (mounted) {
+        setState(() {
+          habits = loadedHabits;
+          totalXP = stats['total_xp'] ?? 0;
+          bestStreak = stats['best_streak'] ?? 0;
+          _isLoading = false;
+        });
+        print('✅ Database loaded in ${stopwatch.elapsedMilliseconds}ms');
+      }
+    } catch (e) {
+      print('❌ Database error: $e');
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
   }
 
   Future<void> _saveStats() async {
@@ -79,7 +102,7 @@ class _DashboardScreenState extends State<DashboardScreen>
             Habit(name: name, xpReward: 50),
           );
           setState(() => habits.add(newHabit));
-          Navigator.pop(ctx);
+          if (mounted) Navigator.pop(ctx);
         },
       ),
     );
@@ -206,6 +229,12 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Widget _buildDashboardContent() {
+    if (_isLoading) {
+      return const Center(
+        child: CircularProgressIndicator(color: Color(0xFF00D4AA)),
+      );
+    }
+    
     return CustomScrollView(
       slivers: [
         SliverToBoxAdapter(child: _buildAppBar()),
@@ -605,6 +634,17 @@ class _DashboardScreenState extends State<DashboardScreen>
                       ),
                     ).then((_) => setState(() => _selectedNavIndex = 0));
                   }
+                  if (index == 2) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => QuestScreen(
+                          userXP: totalXP,
+                          bestStreak: bestStreak,
+                        ),
+                      ),
+                    );
+                  }
                   if (index == 3) {
                     Navigator.push(
                       context,
@@ -757,11 +797,11 @@ class _CreateHabitSheet extends StatefulWidget {
 }
 
 class _CreateHabitSheetState extends State<_CreateHabitSheet> {
-  final _controller = TextEditingController();
+  final _nameController = TextEditingController();
 
   @override
   void dispose() {
-    _controller.dispose();
+    _nameController.dispose();
     super.dispose();
   }
 
@@ -788,7 +828,7 @@ class _CreateHabitSheetState extends State<_CreateHabitSheet> {
           ),
           const SizedBox(height: 20),
           TextField(
-            controller: _controller,
+            controller: _nameController,
             autofocus: true,
             style: const TextStyle(color: Colors.white),
             decoration: InputDecoration(
@@ -819,9 +859,14 @@ class _CreateHabitSheetState extends State<_CreateHabitSheet> {
                 ),
               ),
               onPressed: () {
-                if (_controller.text.trim().isNotEmpty) {
-                  widget.onCreate(_controller.text.trim());
+                final name = _nameController.text.trim();
+                if (name.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Please enter a habit name')),
+                  );
+                  return;
                 }
+                widget.onCreate(name);
               },
               child: const Text(
                 'CREATE MISSION',
