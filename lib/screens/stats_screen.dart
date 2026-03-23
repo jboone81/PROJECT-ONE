@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
+import '../database_helper.dart';
 
-// ─── Pass your real habits list in from DashboardScreen ───────────────────────
 class StatsScreen extends StatefulWidget {
-  final List<HabitStat> habits;
   final int totalXP;
   final int bestStreak;
+  final List<HabitStat> habits;
 
   const StatsScreen({
     super.key,
@@ -23,9 +23,11 @@ class _StatsScreenState extends State<StatsScreen>
   late AnimationController _entryController;
   late Animation<double> _entryAnimation;
 
-  // Generate mock weekly data for demo — replace with real data from your store
-  late final List<DayRecord> _weekRecords;
-  late final List<XpPoint> _xpHistory;
+  // Real data loaded from database
+  List<DayRecord> _weekRecords = [];
+  List<XpPoint> _xpHistory = [];
+  List<HabitStat> _habitStats = [];
+  bool _isLoading = true;
 
   @override
   void initState() {
@@ -39,8 +41,9 @@ class _StatsScreenState extends State<StatsScreen>
       curve: Curves.easeOutCubic,
     );
     _entryController.forward();
-    _weekRecords = _buildWeekRecords();
-    _xpHistory = _buildXpHistory();
+
+    // Load real data from the database
+    _loadStatsData();
   }
 
   @override
@@ -49,34 +52,59 @@ class _StatsScreenState extends State<StatsScreen>
     super.dispose();
   }
 
-  // ─── Mock data builders (swap with real persistence) ─────────────────────
+  // ─── Load real data from database ────────────────────────────────────────
 
-  List<DayRecord> _buildWeekRecords() {
-    final rng = math.Random(42);
-    final today = DateTime.now();
-    return List.generate(7, (i) {
-      final date = today.subtract(Duration(days: 6 - i));
-      final total = widget.habits.isEmpty ? 3 : widget.habits.length;
-      final completed = i == 6
-          ? widget.habits.where((h) => h.isCompleted).length
-          : rng.nextInt(total + 1);
+  Future<void> _loadStatsData() async {
+    final db = DatabaseHelper.instance;
+
+    // Load weekly completions, XP history, and per-habit rates in parallel
+    final results = await Future.wait([
+      db.getWeeklyCompletions(),
+      db.getWeeklyXP(),
+      db.getHabitWeeklyRates(),
+    ]);
+
+    final weeklyCompletions = results[0];
+    final weeklyXP = results[1];
+    final habitRates = results[2];
+
+    final totalHabits = widget.habits.isEmpty ? 1 : widget.habits.length;
+
+    // Build DayRecord list from real completion data
+    final weekRecords = weeklyCompletions.map((row) {
       return DayRecord(
-        date: date,
-        completed: completed,
-        total: total == 0 ? 3 : total,
+        date: row['date'] as DateTime,
+        completed: row['completed'] as int,
+        total: totalHabits,
       );
-    });
-  }
+    }).toList();
 
-  List<XpPoint> _buildXpHistory() {
-    final rng = math.Random(7);
-    int running = math.max(0, widget.totalXP - rng.nextInt(300) - 100);
-    final today = DateTime.now();
-    return List.generate(7, (i) {
-      final date = today.subtract(Duration(days: 6 - i));
-      if (i == 6) return XpPoint(date: date, xp: widget.totalXP);
-      running += rng.nextInt(60);
-      return XpPoint(date: date, xp: running);
+    // Build XpPoint list from real XP history
+    final xpHistory = weeklyXP.map((row) {
+      return XpPoint(date: row['date'] as DateTime, xp: row['xp'] as int);
+    }).toList();
+
+    // Build HabitStat list — merge DB rates with passed-in habit info
+    final Map<String, double> rateMap = {
+      for (final r in habitRates)
+        r['habit_name'] as String: (r['rate'] as double),
+    };
+
+    final habitStats = widget.habits.map((h) {
+      return HabitStat(
+        name: h.name,
+        streak: h.streak,
+        isCompleted: h.isCompleted,
+        // Use real rate from DB if available, otherwise fall back
+        weeklyCompletionRate: rateMap[h.name] ?? (h.isCompleted ? 1.0 : 0.0),
+      );
+    }).toList();
+
+    setState(() {
+      _weekRecords = weekRecords;
+      _xpHistory = xpHistory;
+      _habitStats = habitStats;
+      _isLoading = false;
     });
   }
 
@@ -105,20 +133,24 @@ class _StatsScreenState extends State<StatsScreen>
     return Scaffold(
       backgroundColor: const Color(0xFF0F0F1A),
       body: SafeArea(
-        child: FadeTransition(
-          opacity: _entryAnimation,
-          child: CustomScrollView(
-            physics: const BouncingScrollPhysics(),
-            slivers: [
-              SliverToBoxAdapter(child: _buildHeader()),
-              SliverToBoxAdapter(child: _buildStreakCards()),
-              SliverToBoxAdapter(child: _buildHeatmapSection()),
-              SliverToBoxAdapter(child: _buildXpChartSection()),
-              SliverToBoxAdapter(child: _buildHabitBreakdown()),
-              const SliverToBoxAdapter(child: SizedBox(height: 100)),
-            ],
-          ),
-        ),
+        child: _isLoading
+            ? const Center(
+                child: CircularProgressIndicator(color: Color(0xFF00D4AA)),
+              )
+            : FadeTransition(
+                opacity: _entryAnimation,
+                child: CustomScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  slivers: [
+                    SliverToBoxAdapter(child: _buildHeader()),
+                    SliverToBoxAdapter(child: _buildStreakCards()),
+                    SliverToBoxAdapter(child: _buildHeatmapSection()),
+                    SliverToBoxAdapter(child: _buildXpChartSection()),
+                    SliverToBoxAdapter(child: _buildHabitBreakdown()),
+                    const SliverToBoxAdapter(child: SizedBox(height: 100)),
+                  ],
+                ),
+              ),
       ),
     );
   }
@@ -141,18 +173,22 @@ class _StatsScreenState extends State<StatsScreen>
                   color: Colors.white.withOpacity(0.08),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(Icons.arrow_back_ios_new_rounded,
-                    color: Colors.white, size: 16),
+                child: const Icon(
+                  Icons.arrow_back_ios_new_rounded,
+                  color: Colors.white,
+                  size: 16,
+                ),
               ),
             ),
           Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
               color: const Color(0xFF00D4AA).withOpacity(0.12),
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
-                  color: const Color(0xFF00D4AA).withOpacity(0.3), width: 1),
+                color: const Color(0xFF00D4AA).withOpacity(0.3),
+                width: 1,
+              ),
             ),
             child: const Text(
               'STATS',
@@ -236,9 +272,10 @@ class _StatsScreenState extends State<StatsScreen>
     return Row(
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
-        Text('Less',
-            style: TextStyle(
-                color: Colors.white.withOpacity(0.3), fontSize: 11)),
+        Text(
+          'Less',
+          style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 11),
+        ),
         const SizedBox(width: 6),
         ...List.generate(5, (i) {
           return Container(
@@ -252,9 +289,10 @@ class _StatsScreenState extends State<StatsScreen>
           );
         }),
         const SizedBox(width: 6),
-        Text('More',
-            style: TextStyle(
-                color: Colors.white.withOpacity(0.3), fontSize: 11)),
+        Text(
+          'More',
+          style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 11),
+        ),
       ],
     );
   }
@@ -267,8 +305,10 @@ class _StatsScreenState extends State<StatsScreen>
       const Color(0xFF00A876),
       const Color(0xFF00D4AA),
     ];
-    final idx = ((rate * (colors.length - 1)).clamp(0, colors.length - 1))
-        .floor();
+    final idx = ((rate * (colors.length - 1)).clamp(
+      0,
+      colors.length - 1,
+    )).floor();
     return colors[idx];
   }
 
@@ -282,7 +322,9 @@ class _StatsScreenState extends State<StatsScreen>
         children: [
           _SectionTitle(
             title: 'XP Over Time',
-            subtitle: '+${_xpHistory.last.xp - _xpHistory.first.xp} XP this week',
+            subtitle: _xpHistory.isEmpty
+                ? ''
+                : '+${_xpHistory.last.xp - _xpHistory.first.xp} XP this week',
           ),
           const SizedBox(height: 16),
           SizedBox(
@@ -300,7 +342,7 @@ class _StatsScreenState extends State<StatsScreen>
   // ─── Per-habit breakdown ──────────────────────────────────────────────────
 
   Widget _buildHabitBreakdown() {
-    if (widget.habits.isEmpty) return const SizedBox.shrink();
+    if (_habitStats.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 28, 20, 0),
       child: Column(
@@ -308,7 +350,7 @@ class _StatsScreenState extends State<StatsScreen>
         children: [
           const _SectionTitle(title: 'Habit Breakdown', subtitle: 'This week'),
           const SizedBox(height: 16),
-          ...widget.habits.map((h) => _HabitBreakdownRow(habit: h)),
+          ..._habitStats.map((h) => _HabitBreakdownRow(habit: h)),
         ],
       ),
     );
@@ -337,40 +379,38 @@ class _WeekHeatmap extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.04),
         borderRadius: BorderRadius.circular(16),
-        border:
-            Border.all(color: Colors.white.withOpacity(0.08), width: 1),
+        border: Border.all(color: Colors.white.withOpacity(0.08), width: 1),
       ),
       child: Column(
         children: [
-          // Day labels
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: dayLabels
-                .map((d) => SizedBox(
-                      width: 36,
-                      child: Text(
-                        d,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.35),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 0.5,
-                        ),
+                .map(
+                  (d) => SizedBox(
+                    width: 36,
+                    child: Text(
+                      d,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.35),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.5,
                       ),
-                    ))
+                    ),
+                  ),
+                )
                 .toList(),
           ),
           const SizedBox(height: 10),
-          // Heatmap cells
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: List.generate(records.length, (i) {
               final rec = records[i];
               final isToday = i == records.length - 1;
               return Tooltip(
-                message:
-                    '${rec.completed}/${rec.total} completed',
+                message: '${rec.completed}/${rec.total} completed',
                 child: AnimatedContainer(
                   duration: Duration(milliseconds: 300 + i * 60),
                   width: 36,
@@ -379,8 +419,7 @@ class _WeekHeatmap extends StatelessWidget {
                     color: _heatColor(rec.completionRate),
                     borderRadius: BorderRadius.circular(8),
                     border: isToday
-                        ? Border.all(
-                            color: const Color(0xFF00D4AA), width: 1.5)
+                        ? Border.all(color: const Color(0xFF00D4AA), width: 1.5)
                         : null,
                   ),
                   child: Center(
@@ -400,21 +439,22 @@ class _WeekHeatmap extends StatelessWidget {
             }),
           ),
           const SizedBox(height: 10),
-          // Date row
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: records
-                .map((r) => SizedBox(
-                      width: 36,
-                      child: Text(
-                        '${r.date.day}',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.2),
-                          fontSize: 10,
-                        ),
+                .map(
+                  (r) => SizedBox(
+                    width: 36,
+                    child: Text(
+                      '${r.date.day}',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.2),
+                        fontSize: 10,
                       ),
-                    ))
+                    ),
+                  ),
+                )
                 .toList(),
           ),
         ],
@@ -461,13 +501,31 @@ class _XpLineChartState extends State<_XpLineChart>
 
   @override
   Widget build(BuildContext context) {
+    if (widget.points.isEmpty) {
+      return Container(
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.04),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withOpacity(0.08), width: 1),
+        ),
+        child: Center(
+          child: Text(
+            'Complete habits to see your XP chart',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.3),
+              fontSize: 13,
+            ),
+          ),
+        ),
+      );
+    }
+
     return Container(
       padding: const EdgeInsets.fromLTRB(8, 16, 8, 8),
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.04),
         borderRadius: BorderRadius.circular(16),
-        border:
-            Border.all(color: Colors.white.withOpacity(0.08), width: 1),
+        border: Border.all(color: Colors.white.withOpacity(0.08), width: 1),
       ),
       child: AnimatedBuilder(
         animation: _drawAnimation,
@@ -525,8 +583,11 @@ class _LinePainter extends CustomPainter {
       ..strokeWidth = 1;
     for (int i = 0; i <= 3; i++) {
       final y = padTop + (drawH / 3) * i;
-      canvas.drawLine(Offset(padLeft, y), Offset(size.width - padRight, y),
-          gridPaint);
+      canvas.drawLine(
+        Offset(padLeft, y),
+        Offset(size.width - padRight, y),
+        gridPaint,
+      );
     }
 
     // Y-axis labels
@@ -544,10 +605,8 @@ class _LinePainter extends CustomPainter {
       tp.paint(canvas, Offset(0, y - tp.height / 2));
     }
 
-    // Build path up to progress
     final totalPoints = points.length;
-    final visibleCount =
-        ((totalPoints - 1) * progress).floor() + 1;
+    final visibleCount = ((totalPoints - 1) * progress).floor() + 1;
 
     final path = Path();
     final fillPath = Path();
@@ -559,7 +618,6 @@ class _LinePainter extends CustomPainter {
         fillPath.moveTo(padLeft, padTop + drawH);
         fillPath.lineTo(o.dx, o.dy);
       } else {
-        // Smooth curve
         final prev = toOffset(i - 1);
         final cpX = (prev.dx + o.dx) / 2;
         path.cubicTo(cpX, prev.dy, cpX, o.dy, o.dx, o.dy);
@@ -567,21 +625,16 @@ class _LinePainter extends CustomPainter {
       }
     }
 
-    // Fill gradient
     fillPath.lineTo(toOffset(visibleCount - 1).dx, padTop + drawH);
     fillPath.close();
     final fillPaint = Paint()
       ..shader = LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
-        colors: [
-          accentColor.withOpacity(0.25),
-          accentColor.withOpacity(0.0),
-        ],
+        colors: [accentColor.withOpacity(0.25), accentColor.withOpacity(0.0)],
       ).createShader(Rect.fromLTWH(0, padTop, size.width, drawH));
     canvas.drawPath(fillPath, fillPaint);
 
-    // Line
     final linePaint = Paint()
       ..color = accentColor
       ..strokeWidth = 2.5
@@ -590,23 +643,18 @@ class _LinePainter extends CustomPainter {
       ..strokeJoin = StrokeJoin.round;
     canvas.drawPath(path, linePaint);
 
-    // Dots + day labels
     const dayLabels = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
     for (int i = 0; i < visibleCount && i < totalPoints; i++) {
       final o = toOffset(i);
       final isLast = i == totalPoints - 1;
 
-      // Dot
+      canvas.drawCircle(o, isLast ? 5 : 3.5, Paint()..color = accentColor);
       canvas.drawCircle(
-          o,
-          isLast ? 5 : 3.5,
-          Paint()..color = accentColor);
-      canvas.drawCircle(
-          o,
-          isLast ? 3 : 2,
-          Paint()..color = const Color(0xFF0F0F1A));
+        o,
+        isLast ? 3 : 2,
+        Paint()..color = const Color(0xFF0F0F1A),
+      );
 
-      // Day label
       final tp = TextPainter(
         text: TextSpan(
           text: dayLabels[i % dayLabels.length],
@@ -618,8 +666,7 @@ class _LinePainter extends CustomPainter {
         ),
         textDirection: TextDirection.ltr,
       )..layout();
-      tp.paint(canvas,
-          Offset(o.dx - tp.width / 2, padTop + drawH + 8));
+      tp.paint(canvas, Offset(o.dx - tp.width / 2, padTop + drawH + 8));
     }
   }
 
@@ -643,8 +690,7 @@ class _HabitBreakdownRow extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.04),
         borderRadius: BorderRadius.circular(12),
-        border:
-            Border.all(color: Colors.white.withOpacity(0.07), width: 1),
+        border: Border.all(color: Colors.white.withOpacity(0.07), width: 1),
       ),
       child: Row(
         children: [
@@ -671,8 +717,8 @@ class _HabitBreakdownRow extends StatelessWidget {
                       rate >= 0.75
                           ? const Color(0xFF00D4AA)
                           : rate >= 0.4
-                              ? const Color(0xFFFFB347)
-                              : const Color(0xFFFF6B6B),
+                          ? const Color(0xFFFFB347)
+                          : const Color(0xFFFF6B6B),
                     ),
                   ),
                 ),
@@ -738,7 +784,7 @@ class _SectionTitle extends StatelessWidget {
               fontWeight: FontWeight.w500,
             ),
           ),
-        ]
+        ],
       ],
     );
   }
@@ -765,8 +811,7 @@ class _SummaryCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: accentColor.withOpacity(0.08),
           borderRadius: BorderRadius.circular(14),
-          border:
-              Border.all(color: accentColor.withOpacity(0.2), width: 1),
+          border: Border.all(color: accentColor.withOpacity(0.2), width: 1),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -806,11 +851,7 @@ class DayRecord {
   final int completed;
   final int total;
 
-  DayRecord({
-    required this.date,
-    required this.completed,
-    required this.total,
-  });
+  DayRecord({required this.date, required this.completed, required this.total});
 
   double get completionRate =>
       total == 0 ? 0 : (completed / total).clamp(0.0, 1.0);

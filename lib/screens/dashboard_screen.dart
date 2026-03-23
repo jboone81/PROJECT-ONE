@@ -13,12 +13,10 @@ class _DashboardScreenState extends State<DashboardScreen>
     with TickerProviderStateMixin {
   int _selectedNavIndex = 0;
 
-  // App state
   int totalXP = 0;
   int bestStreak = 0;
   List<Habit> habits = [];
 
-  // Convenience getter
   int get activeHabits => habits.length;
 
   late AnimationController _entryController;
@@ -36,8 +34,6 @@ class _DashboardScreenState extends State<DashboardScreen>
       curve: Curves.easeOutCubic,
     );
     _entryController.forward();
-
-    // Load data from database on startup
     _loadData();
   }
 
@@ -51,11 +47,8 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   Future<void> _loadData() async {
     final db = DatabaseHelper.instance;
-
-    // Load habits and stats from the database
     final loadedHabits = await db.getAllHabits();
     final stats = await db.getAppStats();
-
     setState(() {
       habits = loadedHabits;
       totalXP = stats['total_xp'] ?? 0;
@@ -81,13 +74,10 @@ class _DashboardScreenState extends State<DashboardScreen>
       ),
       builder: (ctx) => _CreateHabitSheet(
         onCreate: (name) async {
-          // Insert into database and get back the habit with its new id
           final newHabit = await DatabaseHelper.instance.insertHabit(
             Habit(name: name, xpReward: 50),
           );
-          setState(() {
-            habits.add(newHabit);
-          });
+          setState(() => habits.add(newHabit));
           Navigator.pop(ctx);
         },
       ),
@@ -95,22 +85,31 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Future<void> _toggleHabit(Habit habit) async {
+    final completing = !habit.isCompleted;
+
     final updatedHabit = habit.copyWith(
-      isCompleted: !habit.isCompleted,
-      streak: !habit.isCompleted
+      isCompleted: completing,
+      streak: completing
           ? habit.streak + 1
           : (habit.streak > 0 ? habit.streak - 1 : 0),
     );
 
-    // Update XP
-    if (updatedHabit.isCompleted) {
+    if (completing) {
       totalXP += habit.xpReward;
       if (updatedHabit.streak > bestStreak) bestStreak = updatedHabit.streak;
+
+      // Only log history if the habit has a valid database id
+      if (habit.id != null) {
+        await DatabaseHelper.instance.insertHistoryEntry(
+          habitId: habit.id!,
+          habitName: habit.name,
+          xpEarned: habit.xpReward,
+        );
+      }
     } else {
       totalXP -= habit.xpReward;
     }
 
-    // Save to database
     await DatabaseHelper.instance.updateHabit(updatedHabit);
     await _saveStats();
 
@@ -148,13 +147,11 @@ class _DashboardScreenState extends State<DashboardScreen>
           ),
           TextButton(
             onPressed: () async {
-              // Subtract XP if habit was completed
               if (habit.isCompleted) totalXP -= habit.xpReward;
 
-              // Delete from database
+              // deleteHabit also removes all history entries for this habit
               await DatabaseHelper.instance.deleteHabit(habit.id!);
 
-              // Recalculate bestStreak
               final remaining = habits.where((h) => h.id != habit.id).toList();
               bestStreak = remaining.isEmpty
                   ? 0
@@ -164,10 +161,7 @@ class _DashboardScreenState extends State<DashboardScreen>
 
               await _saveStats();
 
-              setState(() {
-                habits.removeWhere((h) => h.id == habit.id);
-              });
-
+              setState(() => habits.removeWhere((h) => h.id == habit.id));
               Navigator.pop(ctx);
             },
             child: const Text(
