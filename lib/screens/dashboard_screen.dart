@@ -72,7 +72,6 @@ class _DashboardScreenState extends State<DashboardScreen>
       slivers: [
         // App Bar
         SliverToBoxAdapter(child: _buildAppBar()),
-        // Welcome & stats
         SliverToBoxAdapter(child: _buildWelcomeSection()),
         // Stats row
         SliverToBoxAdapter(child: _buildStatsRow()),
