@@ -76,25 +76,6 @@ Use this section to list the specific Project1Q&A questions your team selected f
    - Team Member Responsible: Ugochukwu Odinjor
    - Evidence to Show (code file/commit/UI/screenshot): 
 
-12. Question:
-   - Category:
-   - Team Member Responsible:
-   - Evidence to Show (code file/commit/UI/screenshot):
-
-13. Question:
-   - Category:
-   - Team Member Responsible:
-   - Evidence to Show (code file/commit/UI/screenshot):
-
-14. Question:
-   - Category:
-   - Team Member Responsible:
-   - Evidence to Show (code file/commit/UI/screenshot):
-
-15. Question:
-   - Category:
-   - Team Member Responsible:
-   - Evidence to Show (code file/commit/UI/screenshot):
 
 ## Final Confirmation
 - [X] This form includes the questions selected for our presentation.
