@@ -71,10 +71,7 @@ class DatabaseHelper {
 
   Future<Database> get database async {
     if (_database != null) return _database!;
-    print('🔧 Initializing database...');
-    final stopwatch = Stopwatch()..start();
     _database = await _initDB('habit_quest.db');
-    print('✅ Database initialized in ${stopwatch.elapsedMilliseconds}ms');
     return _database!;
   }
 

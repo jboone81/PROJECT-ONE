@@ -51,18 +51,9 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   Future<void> _loadData() async {
     try {
-      final stopwatch = Stopwatch()..start();
-      print('📊 Starting database load...');
-      
       final db = DatabaseHelper.instance;
-      print('⏱️ DatabaseHelper.instance took ${stopwatch.elapsedMilliseconds}ms');
-      
       final loadedHabits = await db.getAllHabits();
-      print('⏱️ getAllHabits took ${stopwatch.elapsedMilliseconds}ms total (${stopwatch.elapsedMilliseconds}ms for this operation)');
-      
       final stats = await db.getAppStats();
-      print('⏱️ getAppStats took ${stopwatch.elapsedMilliseconds}ms total');
-      
       if (mounted) {
         setState(() {
           habits = loadedHabits;
@@ -70,10 +61,8 @@ class _DashboardScreenState extends State<DashboardScreen>
           bestStreak = stats['best_streak'] ?? 0;
           _isLoading = false;
         });
-        print('✅ Database loaded in ${stopwatch.elapsedMilliseconds}ms');
       }
     } catch (e) {
-      print('❌ Database error: $e');
       if (mounted) {
         setState(() => _isLoading = false);
       }
